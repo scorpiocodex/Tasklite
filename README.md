@@ -1,28 +1,23 @@
-# TaskLite
+# TaskLite v2.0
 
-> **Simple Tasks. Clean Flow.**
+> **Premium Tasks. Production Flow.**
 
-TaskLite is a production-hardened, full-stack task manager built with Node.js (Express) on the backend and plain HTML, CSS, and Vanilla JavaScript on the frontend.
+TaskLite is a production-hardened, full-stack task manager built with Node.js (Express) on the backend and plain HTML, CSS, and Vanilla JavaScript on the frontend. Version 2.0 brings a stunning glassmorphism UI, SQLite persistence, and a highly modular architecture.
 
 ---
 
 ## Features
 
-- Add tasks (title validated: 1–200 characters)
-- Mark tasks as complete / incomplete (toggle) with **optimistic UI**
-- Delete tasks with **optimistic UI**
-- **Inline title editing** — double-click any task title to edit, Enter to save, Escape to cancel
-- **Filter tabs** — All | Active | Completed
-- **"Clear completed"** button — bulk-deletes all finished tasks
-- **Pending badge** — live count of remaining tasks in the header
-- **Dark mode** — automatic via `prefers-color-scheme`
-- **LocalStorage persistence** — instant display on page load; silently syncs with backend in background
-- Structured request logging on the server
-- Graceful shutdown (`SIGINT` / `SIGTERM`)
-- JSON error responses for all routes (no HTML error pages)
-- Entrance animation for task items
-- Fully keyboard-navigable with visible focus rings
-- `<noscript>` fallback banner
+- **SQLite Persistence** — completely reliable disk-backed storage using `better-sqlite3`.
+- **Drag & Drop** — Native reordering of tasks synced live to the database.
+- **Modern Glassmorphism UI** — Premium gradients, sleek micro-animations, and custom fonts.
+- **Search & Filter** — Instant debounced client-side searching with active/completed tabs.
+- **Optimistic UI** — Instant interactions combined with a background sync mechanism.
+- **Keyboard Shortcuts** — Navigate without a mouse (`n`, `/`, `t`, `?`).
+- **Dark/Light Theme** — OS-synced with a manual override toggle.
+- **Automated Tests** — Fully verified via exhaustive Jest API tests.
+- **Sci-Fi CLI** — Beautiful, colored backend logging mechanism.
+- **API Security** — Helmet headers, rate limiting, and robust error handling.
 
 ---
 
@@ -30,9 +25,10 @@ TaskLite is a production-hardened, full-stack task manager built with Node.js (E
 
 | Layer     | Technology               |
 |-----------|--------------------------|
-| Backend   | Node.js ≥16, Express 4, CORS |
-| Frontend  | HTML5, CSS3, Vanilla JS (ES2020) |
-| Storage   | In-memory (server) + LocalStorage (client) |
+| Backend   | Node.js ≥16, Express 4.21 |
+| DB        | SQLite (`better-sqlite3`) |
+| Frontend  | HTML5, CSS3, Vanilla JS  |
+| Testing   | Jest, Supertest          |
 
 ---
 
@@ -42,59 +38,22 @@ TaskLite is a production-hardened, full-stack task manager built with Node.js (E
 tasklite/
 │
 ├── server/
-│   ├── server.js        # Express REST API
+│   ├── server.js        # Express REST API (Entry & Config)
+│   ├── routes.js        # Controller layer
+│   ├── middleware.js    # Security, Validation, Logging
+│   ├── database.js      # SQLite connection & schemas
+│   ├── config.js        # Config mapping from Env vars
+│   ├── server.test.js   # Jest test suites
+│   ├── tasklite.db      # SQLite data file (Gitignored)
 │   └── package.json     # Node dependencies
 │
-├── client/
+├── client/              # Served statically by backend
 │   ├── index.html       # App shell
-│   ├── style.css        # Styling (light + dark themes)
-│   └── script.js        # Frontend logic (state module)
+│   ├── style.css        # Premium glassmorphism
+│   └── script.js        # State, API fetching, drag & drop
 │
 └── README.md
 ```
-
----
-
-## Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT`   | `5000`  | Port the server listens on |
-
-Example:
-```bash
-PORT=8080 npm start
-```
-
----
-
-## API Endpoints
-
-| Method | Endpoint      | Description                | Request Body              | Status Codes |
-|--------|---------------|----------------------------|---------------------------|--------------|
-| GET    | `/tasks`      | Get all tasks              | —                         | 200          |
-| POST   | `/tasks`      | Add a new task             | `{ "title": "..." }`      | 201, 400     |
-| PUT    | `/tasks/:id`  | Toggle task completion     | —                         | 200, 400, 404 |
-| PATCH  | `/tasks/:id`  | Update task title          | `{ "title": "..." }`      | 200, 400, 404 |
-| DELETE | `/tasks/:id`  | Delete a task              | —                         | 200, 400, 404 |
-
-### Task Object
-
-```json
-{
-  "id": 1,
-  "title": "Buy groceries",
-  "completed": false,
-  "createdAt": "2026-02-24T10:00:00.000Z",
-  "updatedAt": "2026-02-24T10:05:00.000Z"
-}
-```
-
-### Validation Rules
-
-- Title must be a non-empty string of **1–200 characters**
-- `:id` must be a valid integer — invalid IDs return `400` (not `404`)
-- Request body must be a valid JSON object where required
 
 ---
 
@@ -107,41 +66,41 @@ cd server
 npm install
 ```
 
-### 2. Start the Backend
+### 2. Start the Application
 
-**Production:**
+The backend will automatically start serving the frontend on port 5000 via statically allocated middleware.
+
 ```bash
 npm start
 ```
 
-**Development (auto-restart on file changes):**
+### 3. Open the Dashboard
+
+Open `http://localhost:5000` directly in your browser.
+
+### 4. Run API Tests
+
+Ensure zero regressions in the REST logic:
 ```bash
-npm run dev
+npm test
 ```
 
-The server prints a structured startup log:
-```
-─────────────────────────────────────────
-  TaskLite Server v1.1.0
-  URL  : http://localhost:5000
-  Time : 2026-02-24T10:00:00.000Z
-─────────────────────────────────────────
-```
+---
 
-### 3. Open the Frontend
+## API Endpoints
 
-Open `client/index.html` directly in your browser:
+| Method | Endpoint      | Description                | Request Body              | Status |
+|--------|---------------|----------------------------|---------------------------|--------|
+| GET    | `/tasks`      | Get all tasks              | —                         | 200    |
+| GET    | `/tasks?search=word`| Search tasks         | —                         | 200    |
+| POST   | `/tasks`      | Add a new task             | `{ "title": "..." }`      | 201    |
+| PUT    | `/tasks/:id`  | Toggle task completion     | —                         | 200    |
+| PATCH  | `/tasks/:id`  | Update task title          | `{ "title": "..." }`      | 200    |
+| PUT    | `/tasks/reorder` | Update task positions  | `{ "updates": [...] }`    | 200    |
+| DELETE | `/tasks/completed`| Bulk purge completed | —                         | 200    |
+| DELETE | `/tasks/:id`  | Delete a task              | —                         | 200    |
 
-```bash
-# Windows
-start ../client/index.html
-
-# macOS
-open ../client/index.html
-
-# Linux
-xdg-open ../client/index.html
-```
+---
 
 > **Note:** The backend must be running before you open the frontend.
 

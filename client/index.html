@@ -1,79 +1,145 @@
 <!DOCTYPE html>
 <html lang="en">
+
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="TaskLite — A lightweight, fast task manager. Add, complete, filter, and clear tasks with a clean, minimal interface." />
-    <title>TaskLite — Simple Tasks. Clean Flow.</title>
+    <meta name="description" content="TaskLite — Elegant task management." />
+    <title>TaskLite</title>
 
-    <!-- Inline SVG favicon (checkmark in brand blue) -->
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234f6ef7'/%3E%3Cpath d='M8 16l6 6 10-12' stroke='%23fff' stroke-width='3' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <link rel="icon" type="image/svg+xml"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%237c3aed'/%3E%3Cpath d='M8 16l6 6 10-12' stroke='%23fff' stroke-width='3' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E" />
 
     <link rel="stylesheet" href="style.css" />
-
-    <noscript>
-      <style>.noscript-banner { display: flex !important; }</style>
-    </noscript>
   </head>
+
   <body>
-    <!-- No-JS fallback banner -->
-    <div class="noscript-banner" role="alert">
-      <strong>JavaScript is required</strong> to use TaskLite. Please enable JavaScript in your browser settings.
-    </div>
+    <!-- Top bar -->
+    <nav class="topbar">
+      <div class="topbar-left">
+        <div class="brand">
+          <div class="brand-icon">
+            <svg viewBox="0 0 32 32">
+              <rect width="32" height="32" rx="8" fill="currentColor" />
+              <path d="M8 16l6 6 10-12" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"
+                fill="none" />
+            </svg>
+          </div>
+          <span class="brand-name">TaskLite</span>
+        </div>
+      </div>
+      <div class="topbar-right">
+        <button id="helpBtn" class="topbar-btn" aria-label="Shortcuts" title="Keyboard shortcuts (?)">
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+            <path stroke-linecap="round" stroke-linejoin="round"
+              d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        </button>
+      </div>
+    </nav>
 
     <div class="container">
-      <!-- Header -->
-      <header class="header">
-        <div class="header-row">
-          <h1 class="logo">TaskLite</h1>
-          <span class="pending-badge" id="pendingBadge" aria-label="Pending tasks" hidden></span>
+      <main class="card">
+        <!-- Input area -->
+        <div class="card-section card-section--input">
+          <div class="input-row">
+            <div class="search-wrap">
+              <svg class="field-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              <input type="text" id="searchInput" class="field" placeholder="Search…" aria-label="Search tasks"
+                autocomplete="off" />
+            </div>
+            <div class="task-wrap">
+              <input type="text" id="taskInput" class="field field--main" placeholder="Add a new task…" maxlength="200"
+                autocomplete="off" aria-label="New task" />
+            </div>
+            <button id="addBtn" class="btn btn--primary" aria-label="Add task">Add</button>
+          </div>
         </div>
-        <p class="tagline">Simple Tasks. Clean Flow.</p>
-      </header>
 
-      <!-- Add Task Form -->
-      <section class="input-section" aria-label="Add a new task">
-        <div class="input-row">
-          <input
-            type="text"
-            id="taskInput"
-            class="task-input"
-            placeholder="What needs to be done?"
-            maxlength="200"
-            autocomplete="off"
-            aria-label="New task title"
-          />
-          <button id="addBtn" class="btn btn-primary" aria-label="Add task">Add Task</button>
+        <!-- Tabs & progress -->
+        <div class="card-section card-section--tabs">
+          <div class="tabs" role="tablist" aria-label="Filter tasks">
+            <button class="tab active" data-filter="all" role="tab" aria-selected="true">All</button>
+            <button class="tab" data-filter="active" role="tab" aria-selected="false">Active</button>
+            <button class="tab" data-filter="completed" role="tab" aria-selected="false">Completed</button>
+          </div>
+          <div class="progress" aria-label="Completion">
+            <div class="progress-track">
+              <div class="progress-fill" id="progressBar"></div>
+            </div>
+            <span class="progress-label" id="progressText">0%</span>
+          </div>
         </div>
-        <!-- Inline error message -->
-        <p id="errorMsg" class="error-msg" role="status" aria-live="polite"></p>
-      </section>
 
-      <!-- Filter Tabs -->
-      <div class="filter-tabs" role="tablist" aria-label="Filter tasks">
-        <button class="filter-tab active" data-filter="all" role="tab" aria-selected="true">All</button>
-        <button class="filter-tab" data-filter="active" role="tab" aria-selected="false">Active</button>
-        <button class="filter-tab" data-filter="completed" role="tab" aria-selected="false">Completed</button>
+        <!-- Tasks -->
+        <div class="card-section card-section--list">
+          <ul class="task-list" id="taskList" aria-label="Task list"></ul>
+          <div class="empty" id="emptyState">
+            <div class="empty-icon">
+              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                <path stroke-linecap="round" stroke-linejoin="round"
+                  d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+              </svg>
+            </div>
+            <p class="empty-title" id="emptyTitle">No tasks yet</p>
+            <p class="empty-desc" id="emptyMsg">Add your first task above to get started.</p>
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="card-footer">
+          <span class="footer-stats" id="statsBar">Loading…</span>
+          <button id="clearBtn" class="btn btn--ghost btn--sm" hidden>Clear completed</button>
+        </div>
+      </main>
+    </div>
+
+    <!-- Toasts -->
+    <div id="toastContainer" class="toast-stack" aria-live="polite"></div>
+
+    <!-- Help Modal -->
+    <div id="helpModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle" hidden>
+      <div class="modal-overlay"></div>
+      <div class="modal-box">
+        <div class="modal-header">
+          <h2 id="modalTitle">Keyboard shortcuts</h2>
+          <button id="closeModalBtn" class="modal-close" aria-label="Close">
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        <ul class="shortcuts">
+          <li><kbd>n</kbd><span>New task</span></li>
+          <li><kbd>/</kbd><span>Search</span></li>
+          <li><kbd>?</kbd><span>Show shortcuts</span></li>
+          <li><kbd>esc</kbd><span>Close / Cancel</span></li>
+        </ul>
       </div>
+    </div>
 
-      <!-- Task Stats -->
-      <section class="stats-bar" id="statsBar" aria-label="Task statistics" aria-live="polite"></section>
-
-      <!-- Task List -->
-      <ul class="task-list" id="taskList" aria-label="Task list"></ul>
-
-      <!-- Empty state shown when there are no tasks in the current filter -->
-      <div class="empty-state" id="emptyState">
-        <span class="empty-icon" aria-hidden="true">📋</span>
-        <p id="emptyMsg">No tasks yet. Add one above!</p>
-      </div>
-
-      <!-- Clear completed button — hidden until completed tasks exist -->
-      <div class="clear-completed-row" id="clearCompletedRow" hidden>
-        <button id="clearCompletedBtn" class="btn btn-ghost">Clear completed</button>
+    <!-- Confirm Modal -->
+    <div id="confirmModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="confirmTitle" hidden>
+      <div class="modal-overlay"></div>
+      <div class="modal-box modal-box--sm">
+        <div class="modal-header">
+          <h2 id="confirmTitle">Clear completed tasks?</h2>
+        </div>
+        <p class="modal-desc">This will permanently remove all completed tasks. This cannot be undone.</p>
+        <div class="modal-actions">
+          <button id="cancelConfirmBtn" class="btn btn--subtle">Cancel</button>
+          <button id="executeConfirmBtn" class="btn btn--danger">Clear</button>
+        </div>
       </div>
     </div>
 
     <script src="script.js"></script>
   </body>
+
 </html>

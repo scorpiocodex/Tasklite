@@ -1,477 +1,348 @@
 // =============================================
-// TaskLite — script.js  v1.1.0
-// State-module architecture with optimistic UI,
-// filters, inline edit, and background sync.
+// TaskLite — script.js v2.1
 // =============================================
 
-const API_BASE = 'http://localhost:5000';
-const LS_KEY = 'tasklite_tasks';
+const API_BASE = '';
 
-// ─────────────────────────────────────────────
-// Application State
-// ─────────────────────────────────────────────
 const state = {
-  tasks: [],          // Source of truth for the current session
-  activeFilter: 'all', // 'all' | 'active' | 'completed'
+  tasks: [],
+  activeFilter: 'all',
+  searchQuery: '',
+  draggedTask: null,
 };
 
-// ─────────────────────────────────────────────
-// DOM References
-// ─────────────────────────────────────────────
-const taskInput       = document.getElementById('taskInput');
-const addBtn          = document.getElementById('addBtn');
-const taskList        = document.getElementById('taskList');
-const errorMsg        = document.getElementById('errorMsg');
-const statsBar        = document.getElementById('statsBar');
-const emptyState      = document.getElementById('emptyState');
-const emptyMsg        = document.getElementById('emptyMsg');
-const pendingBadge    = document.getElementById('pendingBadge');
-const clearCompletedRow = document.getElementById('clearCompletedRow');
-const clearCompletedBtn = document.getElementById('clearCompletedBtn');
-const filterTabs      = document.querySelectorAll('.filter-tab');
+// ─── DOM ─────────────────────────────────────
+const els = {
+  taskInput: document.getElementById('taskInput'),
+  searchInput: document.getElementById('searchInput'),
+  addBtn: document.getElementById('addBtn'),
+  clearBtn: document.getElementById('clearBtn'),
+  taskList: document.getElementById('taskList'),
+  statsBar: document.getElementById('statsBar'),
+  emptyState: document.getElementById('emptyState'),
+  emptyTitle: document.getElementById('emptyTitle'),
+  emptyMsg: document.getElementById('emptyMsg'),
+  toastContainer: document.getElementById('toastContainer'),
+  progressBar: document.getElementById('progressBar'),
+  progressText: document.getElementById('progressText'),
+  filterTabs: document.querySelectorAll('.tab'),
+  helpBtn: document.getElementById('helpBtn'),
+  helpModal: document.getElementById('helpModal'),
+  closeModalBtn: document.getElementById('closeModalBtn'),
+  confirmModal: document.getElementById('confirmModal'),
+  cancelConfirmBtn: document.getElementById('cancelConfirmBtn'),
+  executeConfirmBtn: document.getElementById('executeConfirmBtn'),
+};
 
-// Auto-dismiss error timer handle
-let errorTimer = null;
+// ─── Toasts ──────────────────────────────────
+function showToast(message, type = 'info') {
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
 
-// ─────────────────────────────────────────────
-// LOCAL STORAGE HELPERS
-// ─────────────────────────────────────────────
-function saveToLocalStorage(tasks) {
-  try {
-    localStorage.setItem(LS_KEY, JSON.stringify(tasks));
-  } catch (e) {
-    console.warn('TaskLite: localStorage write failed —', e.message);
-  }
+  const icons = {
+    success: '<svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>',
+    error: '<svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>',
+    info: '<svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>',
+  };
+
+  toast.innerHTML = `
+    <div class="toast-icon">${icons[type] || icons.info}</div>
+    <h4>${type.charAt(0).toUpperCase() + type.slice(1)}</h4>
+    <p>${message}</p>
+    <button class="toast-close" aria-label="Close">
+      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+    </button>
+    <div class="toast-progress"><div class="toast-progress-bar"></div></div>
+  `;
+
+  els.toastContainer.appendChild(toast);
+  const remove = () => {
+    toast.classList.add('hiding');
+    toast.addEventListener('animationend', () => toast.remove());
+  };
+  toast.querySelector('.toast-close').addEventListener('click', remove);
+  setTimeout(remove, 4000);
 }
 
-function loadFromLocalStorage() {
-  const raw = localStorage.getItem(LS_KEY);
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
+// ─── Helpers ─────────────────────────────────
+function timeAgo(dateStr) {
+  const d = new Date(dateStr);
+  const diff = Date.now() - d;
+  const m = Math.floor(diff / 60000);
+  const h = Math.floor(m / 60);
+  const days = Math.floor(h / 24);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m}m ago`;
+  if (h < 24) return `${h}h ago`;
+  if (days === 1) return 'yesterday';
+  if (days < 7) return `${days}d ago`;
+  return d.toLocaleDateString();
 }
 
-// ─────────────────────────────────────────────
-// LOADING STATE (addBtn spinner)
-// ─────────────────────────────────────────────
-function setLoading(isLoading) {
-  addBtn.disabled = isLoading;
-  if (isLoading) {
-    addBtn.classList.add('loading');
-  } else {
-    addBtn.classList.remove('loading');
-  }
+function esc(text) {
+  const d = document.createElement('div');
+  d.appendChild(document.createTextNode(text));
+  return d.innerHTML;
 }
 
-// ─────────────────────────────────────────────
-// ERROR HELPERS (auto-dismiss after 4 s)
-// ─────────────────────────────────────────────
-function showError(message) {
-  clearTimeout(errorTimer);
-  errorMsg.textContent = message;
-  errorTimer = setTimeout(clearError, 4000);
-}
-
-function clearError() {
-  clearTimeout(errorTimer);
-  errorMsg.textContent = '';
-}
-
-// ─────────────────────────────────────────────
-// XSS HELPER
-// ─────────────────────────────────────────────
-function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.appendChild(document.createTextNode(text));
-  return div.innerHTML;
-}
-
-// ─────────────────────────────────────────────
-// FILTER LOGIC
-// ─────────────────────────────────────────────
-function getFilteredTasks() {
-  switch (state.activeFilter) {
-    case 'active':
-      return state.tasks.filter((t) => !t.completed);
-    case 'completed':
-      return state.tasks.filter((t) => t.completed);
-    default:
-      return state.tasks;
-  }
-}
-
-// ─────────────────────────────────────────────
-// RENDER — Builds DOM from state
-// ─────────────────────────────────────────────
+// ─── Render ──────────────────────────────────
 function render() {
-  const filtered = getFilteredTasks();
-  const total    = state.tasks.length;
-  const done     = state.tasks.filter((t) => t.completed).length;
-  const pending  = total - done;
-
-  // Pending badge
-  if (pending > 0) {
-    pendingBadge.textContent = pending;
-    pendingBadge.hidden = false;
-  } else {
-    pendingBadge.hidden = true;
+  let filtered = state.tasks;
+  if (state.activeFilter === 'active') filtered = filtered.filter(t => !t.completed);
+  else if (state.activeFilter === 'completed') filtered = filtered.filter(t => t.completed);
+  if (state.searchQuery) {
+    const q = state.searchQuery.toLowerCase();
+    filtered = filtered.filter(t => t.title.toLowerCase().includes(q));
   }
 
-  // Clear completed button visibility
-  if (done > 0) {
-    clearCompletedRow.hidden = false;
-  } else {
-    clearCompletedRow.hidden = true;
-  }
+  const total = state.tasks.length;
+  const done = state.tasks.filter(t => t.completed).length;
+  const pending = total - done;
+  const pct = total ? Math.round((done / total) * 100) : 0;
 
-  // Stats bar
-  if (total === 0) {
-    statsBar.textContent = '';
-  } else {
-    statsBar.textContent = `${total} task${total !== 1 ? 's' : ''} · ${done} completed · ${pending} remaining`;
-  }
+  els.progressText.textContent = `${pct}%`;
+  els.progressBar.style.width = `${pct}%`;
 
-  // Empty state
+  els.statsBar.textContent = total === 0
+    ? 'No tasks yet'
+    : `${pending} active · ${done} completed`;
+  els.clearBtn.hidden = done === 0;
+
   if (filtered.length === 0) {
-    emptyState.classList.add('visible');
-    if (total > 0) {
-      emptyMsg.textContent = `No ${state.activeFilter} tasks.`;
+    els.emptyState.classList.add('visible');
+    if (total === 0) {
+      els.emptyTitle.textContent = 'No tasks yet';
+      els.emptyMsg.textContent = 'Add your first task above to get started.';
+    } else if (state.searchQuery) {
+      els.emptyTitle.textContent = 'No results';
+      els.emptyMsg.textContent = `Nothing matched "${state.searchQuery}".`;
     } else {
-      emptyMsg.textContent = 'No tasks yet. Add one above!';
+      els.emptyTitle.textContent = `No ${state.activeFilter} tasks`;
+      els.emptyMsg.textContent = 'Try a different filter.';
     }
   } else {
-    emptyState.classList.remove('visible');
+    els.emptyState.classList.remove('visible');
   }
 
-  // Rebuild task list
-  taskList.innerHTML = '';
-  filtered.forEach((task) => {
+  els.taskList.innerHTML = '';
+  filtered.forEach(task => {
     const li = document.createElement('li');
     li.className = `task-item${task.completed ? ' completed' : ''}`;
-    li.setAttribute('data-id', task.id);
-    li.setAttribute('title', 'Click to toggle · Double-click to edit');
+    li.dataset.id = task.id;
+    const canDrag = state.activeFilter === 'all' && !state.searchQuery;
+    li.draggable = canDrag;
 
     li.innerHTML = `
-      <div class="task-checkbox" aria-hidden="true"></div>
-      <span class="task-title" title="Double-click to edit">${escapeHtml(task.title)}</span>
-      <div class="delete-area">
-        <button class="btn btn-danger" data-id="${task.id}" title="Delete task" aria-label="Delete task">✕</button>
+      <div class="check" role="checkbox" aria-checked="${task.completed}" tabindex="0">
+        <div class="check-box">
+          <svg class="check-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
+          </svg>
+        </div>
+      </div>
+      <div class="task-body">
+        <span class="task-title">${esc(task.title)}</span>
+        <span class="task-date">${timeAgo(task.createdAt)}</span>
+      </div>
+      <div class="task-actions">
+        <button class="action-btn delete-btn" aria-label="Delete">
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+        </button>
       </div>
     `;
 
-    // Toggle on row click (but not delete area)
-    li.addEventListener('click', (e) => {
-      if (e.target.closest('.delete-area')) return;
-      toggleTask(task.id);
-    });
+    const chk = li.querySelector('.check');
+    chk.addEventListener('click', () => toggleTask(task.id));
+    chk.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') toggleTask(task.id); });
+    li.querySelector('.task-body').addEventListener('dblclick', () => startEdit(li, task));
+    li.querySelector('.delete-btn').addEventListener('click', e => { e.stopPropagation(); deleteTask(task.id); });
 
-    // Inline edit on double-click of the title span
-    li.querySelector('.task-title').addEventListener('dblclick', (e) => {
-      e.stopPropagation();
-      startInlineEdit(li, task);
-    });
+    if (canDrag) {
+      li.classList.add('draggable');
+      li.addEventListener('dragstart', onDragStart);
+      li.addEventListener('dragover', onDragOver);
+      li.addEventListener('drop', onDrop);
+      li.addEventListener('dragend', onDragEnd);
+    }
 
-    // Delete
-    li.querySelector('.btn-danger').addEventListener('click', (e) => {
-      e.stopPropagation();
-      deleteTask(task.id);
-    });
-
-    taskList.appendChild(li);
+    els.taskList.appendChild(li);
   });
-
-  // Persist to localStorage
-  saveToLocalStorage(state.tasks);
 }
 
-// ─────────────────────────────────────────────
-// INLINE EDIT
-// Double-click title → input; Enter/blur → PATCH; Escape → cancel
-// ─────────────────────────────────────────────
-function startInlineEdit(li, task) {
-  const titleSpan = li.querySelector('.task-title');
-  const originalTitle = task.title;
+// ─── Drag & Drop ─────────────────────────────
+function onDragStart(e) {
+  state.draggedTask = this;
+  e.dataTransfer.effectAllowed = 'move';
+  setTimeout(() => this.classList.add('sortable-ghost'), 0);
+}
+function onDragOver(e) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  if (this === state.draggedTask) return;
+  const mid = this.getBoundingClientRect().top + this.offsetHeight / 2;
+  if (e.clientY > mid) {
+    this.style.borderBottom = '2px solid var(--accent)';
+    this.style.borderTop = '';
+  } else {
+    this.style.borderTop = '2px solid var(--accent)';
+    this.style.borderBottom = '';
+  }
+}
+function onDragEnd() {
+  this.classList.remove('sortable-ghost');
+  els.taskList.querySelectorAll('.task-item').forEach(i => { i.style.borderTop = ''; i.style.borderBottom = ''; });
+}
+async function onDrop(e) {
+  e.stopPropagation();
+  if (state.draggedTask === this) return;
+  const mid = this.getBoundingClientRect().top + this.offsetHeight / 2;
+  if (e.clientY > mid) this.after(state.draggedTask); else this.before(state.draggedTask);
+  const ids = [...els.taskList.children].map(li => +li.dataset.id);
+  const map = {};
+  ids.forEach((id, i) => map[id] = i + 1);
+  state.tasks.forEach(t => t.position = map[t.id]);
+  state.tasks.sort((a, b) => a.position - b.position);
+  try {
+    await fetch(`${API_BASE}/tasks/reorder`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ updates: state.tasks.map(t => ({ id: t.id, position: t.position })) })
+    });
+  } catch { showToast('Could not save order', 'error'); }
+}
 
+// ─── Inline Edit ─────────────────────────────
+function startEdit(li, task) {
+  const body = li.querySelector('.task-body');
+  const saved = body.innerHTML;
   const input = document.createElement('input');
   input.type = 'text';
-  input.className = 'task-title-input';
-  input.value = originalTitle;
+  input.className = 'task-edit-input';
+  input.value = task.title;
   input.maxLength = 200;
-
-  titleSpan.replaceWith(input);
+  body.innerHTML = '';
+  body.appendChild(input);
   input.focus();
   input.select();
-
-  let committed = false;
-
-  async function commitEdit() {
-    if (committed) return;
-    committed = true;
-
-    const newTitle = input.value.trim();
-
-    if (!newTitle || newTitle === originalTitle) {
-      // Nothing changed or cleared — restore original
-      input.replaceWith(titleSpan);
-      return;
-    }
-
+  let done = false;
+  async function commit() {
+    if (done) return; done = true;
+    const v = input.value.trim();
+    if (!v || v === task.title) { body.innerHTML = saved; return; }
     try {
-      const response = await fetch(`${API_BASE}/tasks/${task.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: newTitle }),
+      const r = await fetch(`${API_BASE}/tasks/${task.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: v })
       });
-
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        showError(data.error || 'Could not update task title.');
-        input.replaceWith(titleSpan);
-        return;
-      }
-
-      const updated = await response.json();
-      // Update state in-place
-      const idx = state.tasks.findIndex((t) => t.id === task.id);
-      if (idx !== -1) {
-        state.tasks[idx] = updated;
-      }
+      if (!r.ok) throw 0;
+      const u = await r.json();
+      const i = state.tasks.findIndex(t => t.id === task.id);
+      if (i !== -1) state.tasks[i] = u;
       render();
-    } catch {
-      showError('Could not connect to the server.');
-      input.replaceWith(titleSpan);
-    }
+    } catch { showToast('Rename failed', 'error'); body.innerHTML = saved; }
   }
-
-  function cancelEdit() {
-    if (committed) return;
-    committed = true;
-    input.replaceWith(titleSpan);
-  }
-
-  input.addEventListener('blur', commitEdit);
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      input.blur(); // triggers commitEdit via blur
-    } else if (e.key === 'Escape') {
-      cancelEdit();
-    }
+  input.addEventListener('blur', commit);
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    if (e.key === 'Escape') { done = true; body.innerHTML = saved; }
   });
 }
 
-// ─────────────────────────────────────────────
-// FETCH ALL TASKS (background sync)
-// ─────────────────────────────────────────────
-async function fetchTasks() {
-  const response = await fetch(`${API_BASE}/tasks`);
-  if (!response.ok) {
-    throw new Error(`Server responded with ${response.status}`);
-  }
-  return response.json();
-}
-
-// ─────────────────────────────────────────────
-// INITIALIZATION
-// Render from localStorage immediately, then sync with backend silently
-// ─────────────────────────────────────────────
-async function init() {
-  const cached = loadFromLocalStorage();
-
-  if (cached && Array.isArray(cached)) {
-    state.tasks = cached;
-    render();
-  }
-
-  // Background sync — reconcile with backend
+// ─── API ─────────────────────────────────────
+async function loadTasks() {
   try {
-    const serverTasks = await fetchTasks();
-    state.tasks = serverTasks;
+    const r = await fetch(`${API_BASE}/tasks`);
+    if (!r.ok) throw 0;
+    state.tasks = await r.json();
     render();
-  } catch {
-    if (!cached) {
-      showError('Could not connect to the server. Is it running?');
-    }
-    // If we had cached data, just keep it displayed — no error spam
-  }
+  } catch { showToast('Could not connect to server', 'error'); els.statsBar.textContent = 'Offline'; }
 }
 
-// ─────────────────────────────────────────────
-// ADD TASK
-// ─────────────────────────────────────────────
 async function addTask() {
-  const title = taskInput.value.trim();
-
-  if (!title) {
-    showError('Please enter a task title.');
-    taskInput.focus();
-    return;
-  }
-
-  clearError();
-  setLoading(true);
-
+  const title = els.taskInput.value.trim();
+  if (!title) { showToast('Enter a task', 'error'); els.taskInput.focus(); return; }
+  els.addBtn.disabled = true; els.taskInput.disabled = true;
   try {
-    const response = await fetch(`${API_BASE}/tasks`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title }),
+    const r = await fetch(`${API_BASE}/tasks`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title })
     });
-
-    if (!response.ok) {
-      const data = await response.json().catch(() => ({}));
-      showError(data.error || 'Failed to add task.');
-      return;
-    }
-
-    const newTask = await response.json();
-    state.tasks.push(newTask);
-    taskInput.value = '';
-    render();
-  } catch {
-    showError('Could not connect to the server.');
-  } finally {
-    setLoading(false);
-  }
+    if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error || 'Failed'); }
+    state.tasks.push(await r.json());
+    els.taskInput.value = '';
+    if (state.activeFilter === 'completed') setFilter('all'); else render();
+    showToast('Task added', 'success');
+  } catch (e) { showToast(e.message, 'error'); }
+  finally { els.addBtn.disabled = false; els.taskInput.disabled = false; els.taskInput.focus(); }
 }
 
-// ─────────────────────────────────────────────
-// TOGGLE TASK COMPLETION (optimistic)
-// ─────────────────────────────────────────────
 async function toggleTask(id) {
-  const task = state.tasks.find((t) => t.id === id);
-  if (!task) return;
-
-  // Optimistic update
-  const originalCompleted = task.completed;
-  task.completed = !task.completed;
-  render();
-
+  const t = state.tasks.find(x => x.id === id);
+  if (!t) return;
+  t.completed = !t.completed; render();
   try {
-    const response = await fetch(`${API_BASE}/tasks/${id}`, { method: 'PUT' });
-
-    if (!response.ok) {
-      // Roll back
-      task.completed = originalCompleted;
-      render();
-      showError('Could not update task.');
-      return;
-    }
-
-    const updated = await response.json();
-    const idx = state.tasks.findIndex((t) => t.id === id);
-    if (idx !== -1) {
-      state.tasks[idx] = updated;
-    }
-    render();
-  } catch {
-    // Roll back
-    task.completed = originalCompleted;
-    render();
-    showError('Could not connect to the server.');
-  }
+    const r = await fetch(`${API_BASE}/tasks/${id}`, { method: 'PUT' });
+    if (!r.ok) throw 0;
+    Object.assign(t, await r.json());
+  } catch { t.completed = !t.completed; render(); showToast('Update failed', 'error'); }
 }
 
-// ─────────────────────────────────────────────
-// DELETE TASK (optimistic)
-// ─────────────────────────────────────────────
 async function deleteTask(id) {
-  const idx = state.tasks.findIndex((t) => t.id === id);
-  if (idx === -1) return;
-
-  // Optimistic removal
-  const [removed] = state.tasks.splice(idx, 1);
-  render();
-
+  const i = state.tasks.findIndex(x => x.id === id);
+  if (i === -1) return;
+  const bak = state.tasks[i];
+  state.tasks.splice(i, 1); render();
   try {
-    const response = await fetch(`${API_BASE}/tasks/${id}`, { method: 'DELETE' });
-
-    if (!response.ok) {
-      // Roll back — reinsert at original position
-      state.tasks.splice(idx, 0, removed);
-      render();
-      showError('Could not delete task.');
-    }
-  } catch {
-    // Roll back
-    state.tasks.splice(idx, 0, removed);
-    render();
-    showError('Could not connect to the server.');
-  }
+    const r = await fetch(`${API_BASE}/tasks/${id}`, { method: 'DELETE' });
+    if (!r.ok) throw 0;
+    showToast('Task deleted');
+  } catch { state.tasks.splice(i, 0, bak); render(); showToast('Delete failed', 'error'); }
 }
 
-// ─────────────────────────────────────────────
-// CLEAR COMPLETED
-// Loop through completed tasks and DELETE each
-// ─────────────────────────────────────────────
 async function clearCompleted() {
-  const completed = state.tasks.filter((t) => t.completed);
-  if (completed.length === 0) return;
-
-  // Optimistic removal of all completed tasks
-  state.tasks = state.tasks.filter((t) => !t.completed);
-  render();
-
-  // Fire all DELETEs in parallel
-  const results = await Promise.allSettled(
-    completed.map((task) =>
-      fetch(`${API_BASE}/tasks/${task.id}`, { method: 'DELETE' })
-    )
-  );
-
-  // Check if any failed
-  const failed = results.filter((r) => r.status === 'rejected' || (r.value && !r.value.ok));
-  if (failed.length > 0) {
-    showError(`${failed.length} task(s) could not be deleted. Please refresh.`);
-    // Re-sync from server
-    try {
-      const serverTasks = await fetchTasks();
-      state.tasks = serverTasks;
-      render();
-    } catch {
-      // Best-effort — keep optimistic state
-    }
-  }
+  closeConfirm();
+  const n = state.tasks.filter(t => t.completed).length;
+  const bak = [...state.tasks];
+  state.tasks = state.tasks.filter(t => !t.completed); render();
+  try {
+    const r = await fetch(`${API_BASE}/tasks/completed`, { method: 'DELETE' });
+    if (!r.ok) throw 0;
+    showToast(`Cleared ${n} task${n > 1 ? 's' : ''}`, 'success');
+  } catch { state.tasks = bak; render(); showToast('Clear failed', 'error'); }
 }
 
-// ─────────────────────────────────────────────
-// FILTER TABS
-// ─────────────────────────────────────────────
-function setFilter(filter) {
-  state.activeFilter = filter;
-  filterTabs.forEach((tab) => {
-    const isActive = tab.dataset.filter === filter;
-    tab.classList.toggle('active', isActive);
-    tab.setAttribute('aria-selected', isActive ? 'true' : 'false');
+// ─── Events ──────────────────────────────────
+function setFilter(f) {
+  state.activeFilter = f;
+  els.filterTabs.forEach(t => {
+    t.classList.toggle('active', t.dataset.filter === f);
+    t.setAttribute('aria-selected', t.dataset.filter === f);
   });
   render();
 }
+function closeConfirm() { els.confirmModal.hidden = true; }
 
-// ─────────────────────────────────────────────
-// EVENT LISTENERS
-// ─────────────────────────────────────────────
+function init() {
+  els.addBtn.addEventListener('click', addTask);
+  els.taskInput.addEventListener('keydown', e => { if (e.key === 'Enter') addTask(); });
+  els.searchInput.addEventListener('input', e => { state.searchQuery = e.target.value.trim(); render(); });
+  els.filterTabs.forEach(t => t.addEventListener('click', () => setFilter(t.dataset.filter)));
+  els.clearBtn.addEventListener('click', () => els.confirmModal.hidden = false);
+  els.cancelConfirmBtn.addEventListener('click', closeConfirm);
+  els.executeConfirmBtn.addEventListener('click', clearCompleted);
+  els.helpBtn.addEventListener('click', () => els.helpModal.hidden = false);
+  els.closeModalBtn.addEventListener('click', () => els.helpModal.hidden = true);
+  els.helpModal.querySelector('.modal-overlay').addEventListener('click', () => els.helpModal.hidden = true);
+  els.confirmModal.querySelector('.modal-overlay').addEventListener('click', closeConfirm);
+  document.addEventListener('keydown', e => {
+    const typing = ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName);
+    if (e.key === 'Escape') { els.helpModal.hidden = true; closeConfirm(); if (typing) document.activeElement.blur(); return; }
+    if (typing) return;
+    if (e.key === 'n') { e.preventDefault(); els.taskInput.focus(); }
+    else if (e.key === '/') { e.preventDefault(); els.searchInput.focus(); }
+    else if (e.key === '?') { e.preventDefault(); els.helpModal.hidden = !els.helpModal.hidden; }
+  });
+}
 
-// Add task
-addBtn.addEventListener('click', addTask);
-
-taskInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') addTask();
-});
-
-taskInput.addEventListener('input', clearError);
-
-// Filter tabs
-filterTabs.forEach((tab) => {
-  tab.addEventListener('click', () => setFilter(tab.dataset.filter));
-});
-
-// Clear completed
-clearCompletedBtn.addEventListener('click', clearCompleted);
-
-// ─────────────────────────────────────────────
-// KICK OFF THE APP
-// ─────────────────────────────────────────────
 init();
+loadTasks();
+setInterval(render, 60000);

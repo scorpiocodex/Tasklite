@@ -1,203 +1,101 @@
 const express = require('express');
 const cors = require('cors');
+const rateLimit = require('express-rate-limit');
+const helmet = require('helmet');
+const path = require('path');
+const config = require('./config');
+const routes = require('./routes');
+const { errorHandler, requestLogger } = require('./middleware');
 
 const app = express();
-const PORT = process.env.PORT || 5000;
-const VERSION = '1.1.0';
 
 // ─────────────────────────────────────────────
 // Middleware
 // ─────────────────────────────────────────────
 
+// Security headers
+app.use(helmet());
+
 // CORS — open for dev; restrict origins in production via env
 app.use(cors({
-  origin: '*',
+  origin: config.corsOrigin,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
   allowedHeaders: ['Content-Type'],
 }));
 
+// Rate limiting (100 requests per 15 minutes)
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  message: { error: 'Too many requests from this IP, please try again after 15 minutes.' }
+});
+
+app.use(limiter);
+
 // Body parser with 16kb limit to block payload flooding
 app.use(express.json({ limit: '16kb' }));
 
-// Request logger — method · path · status · ms
+// Request logger
+app.use(requestLogger);
+
+// Serve frontend static files
+app.use(express.static(path.join(__dirname, '../client')));
+
+// ─────────────────────────────────────────────
+// Routes
+// ─────────────────────────────────────────────
+app.use(routes);
+
+// ─────────────────────────────────────────────
+// 404 catch-all
+// ─────────────────────────────────────────────
 app.use((req, res, next) => {
-  const start = Date.now();
-  res.on('finish', () => {
-    const ms = Date.now() - start;
-    console.log(`${req.method} ${req.path} → ${res.statusCode} (${ms}ms)`);
+  next({ status: 404, message: `Route ${req.method} ${req.path} not found.` });
+});
+
+// ─────────────────────────────────────────────
+// Error handling middleware
+// ─────────────────────────────────────────────
+app.use(errorHandler);
+
+// ─────────────────────────────────────────────
+// Start the server (Only if not imported as module)
+// ─────────────────────────────────────────────
+if (require.main === module) {
+  const server = app.listen(config.port, () => {
+    // Sci-Fi Grade Terminal UI
+    const cyan = '\x1b[36m';
+    const indigo = '\x1b[38;5;63m';
+    const accent = '\x1b[38;5;141m';
+    const gray = '\x1b[90m';
+    const reset = '\x1b[0m';
+    const bold = '\x1b[1m';
+
+    console.log('');
+    console.log(`${indigo}▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰${reset}`);
+    console.log(`${cyan}   [✧] TASKLITE CORE EXECUTABLE ${bold}v${config.version}${reset}`);
+    console.log(`${gray}   Initializing background sync matrices...${reset}`);
+    console.log(`${indigo}▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰${reset}`);
+    console.log(`${accent}  ▶ GATEWAY : ${reset}http://localhost:${config.port}`);
+    console.log(`${accent}  ▶ ORIGIN  : ${reset}${config.corsOrigin}`);
+    console.log(`${accent}  ▶ TIME    : ${reset}${new Date().toISOString()}`);
+    console.log(`${accent}  ▶ STATUS  : ${cyan}ONLINE & SECURE${reset}`);
+    console.log(`${indigo}────────────────────────────────────────────────────────────────────────${reset}`);
+    console.log(`${gray}  Waiting for neural inputs...${reset}\n`);
   });
-  next();
-});
 
-// ─────────────────────────────────────────────
-// In-memory task store
-// ─────────────────────────────────────────────
-let tasks = [];
-let nextId = 1;
-
-// ─────────────────────────────────────────────
-// Validation helpers
-// ─────────────────────────────────────────────
-
-/**
- * Parse and validate a task ID from a route param.
- * Returns { id: number } on success or { error: string } on failure.
- */
-function parseId(param) {
-  const id = parseInt(param, 10);
-  if (Number.isNaN(id)) {
-    return { error: 'Task ID must be a valid integer.' };
+  // Graceful shutdown
+  function shutdown(signal) {
+    console.log(`\n${signal} received — shutting down gracefully…`);
+    server.close(() => {
+      console.log('Server closed.');
+      process.exit(0);
+    });
   }
-  return { id };
+
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+} else {
+  // Export app for testing
+  module.exports = app;
 }
-
-/**
- * Validate a title string.
- * Must be a non-empty string of 1–200 characters.
- * Returns { title: string } on success or { error: string } on failure.
- */
-function validateTitle(raw) {
-  if (typeof raw !== 'string' || raw.trim() === '') {
-    return { error: 'Task title cannot be empty.' };
-  }
-  const title = raw.trim();
-  if (title.length > 200) {
-    return { error: 'Task title must be 200 characters or fewer.' };
-  }
-  return { title };
-}
-
-// ─────────────────────────────────────────────
-// GET /tasks — Retrieve all tasks
-// ─────────────────────────────────────────────
-app.get('/tasks', (req, res) => {
-  res.status(200).json(tasks);
-});
-
-// ─────────────────────────────────────────────
-// POST /tasks — Create a new task
-// Body: { "title": "Task title" }
-// ─────────────────────────────────────────────
-app.post('/tasks', (req, res) => {
-  // Guard against missing or non-object body
-  if (!req.body || typeof req.body !== 'object') {
-    return res.status(400).json({ error: 'Request body must be a JSON object.' });
-  }
-
-  const { error, title } = validateTitle(req.body.title);
-  if (error) {
-    return res.status(400).json({ error });
-  }
-
-  const now = new Date().toISOString();
-  const newTask = {
-    id: nextId++,
-    title,
-    completed: false,
-    createdAt: now,
-    updatedAt: now,
-  };
-
-  tasks.push(newTask);
-  res.status(201).json(newTask);
-});
-
-// ─────────────────────────────────────────────
-// PUT /tasks/:id — Toggle task completion status
-// ─────────────────────────────────────────────
-app.put('/tasks/:id', (req, res) => {
-  const { error, id } = parseId(req.params.id);
-  if (error) {
-    return res.status(400).json({ error });
-  }
-
-  const task = tasks.find((t) => t.id === id);
-  if (!task) {
-    return res.status(404).json({ error: `Task with id ${id} not found.` });
-  }
-
-  task.completed = !task.completed;
-  task.updatedAt = new Date().toISOString();
-
-  res.status(200).json(task);
-});
-
-// ─────────────────────────────────────────────
-// PATCH /tasks/:id — Update task title (inline edit)
-// Body: { "title": "New title" }
-// ─────────────────────────────────────────────
-app.patch('/tasks/:id', (req, res) => {
-  const { error: idError, id } = parseId(req.params.id);
-  if (idError) {
-    return res.status(400).json({ error: idError });
-  }
-
-  if (!req.body || typeof req.body !== 'object') {
-    return res.status(400).json({ error: 'Request body must be a JSON object.' });
-  }
-
-  const { error: titleError, title } = validateTitle(req.body.title);
-  if (titleError) {
-    return res.status(400).json({ error: titleError });
-  }
-
-  const task = tasks.find((t) => t.id === id);
-  if (!task) {
-    return res.status(404).json({ error: `Task with id ${id} not found.` });
-  }
-
-  task.title = title;
-  task.updatedAt = new Date().toISOString();
-
-  res.status(200).json(task);
-});
-
-// ─────────────────────────────────────────────
-// DELETE /tasks/:id — Remove a task by ID
-// ─────────────────────────────────────────────
-app.delete('/tasks/:id', (req, res) => {
-  const { error, id } = parseId(req.params.id);
-  if (error) {
-    return res.status(400).json({ error });
-  }
-
-  const index = tasks.findIndex((t) => t.id === id);
-  if (index === -1) {
-    return res.status(404).json({ error: `Task with id ${id} not found.` });
-  }
-
-  tasks.splice(index, 1);
-  res.status(200).json({ message: `Task ${id} deleted successfully.` });
-});
-
-// ─────────────────────────────────────────────
-// 404 catch-all — unknown routes return JSON
-// ─────────────────────────────────────────────
-app.use((req, res) => {
-  res.status(404).json({ error: `Route ${req.method} ${req.path} not found.` });
-});
-
-// ─────────────────────────────────────────────
-// Start the server
-// ─────────────────────────────────────────────
-const server = app.listen(PORT, () => {
-  console.log('─────────────────────────────────────────');
-  console.log(`  TaskLite Server v${VERSION}`);
-  console.log(`  URL  : http://localhost:${PORT}`);
-  console.log(`  Time : ${new Date().toISOString()}`);
-  console.log('─────────────────────────────────────────');
-});
-
-// ─────────────────────────────────────────────
-// Graceful shutdown
-// ─────────────────────────────────────────────
-function shutdown(signal) {
-  console.log(`\n${signal} received — shutting down gracefully…`);
-  server.close(() => {
-    console.log('Server closed.');
-    process.exit(0);
-  });
-}
-
-process.on('SIGINT', () => shutdown('SIGINT'));
-process.on('SIGTERM', () => shutdown('SIGTERM'));
